@@ -1,0 +1,3 @@
+[submodule "third_party/TNN"]
+	path = third_party/TNN
+	url = https://github.com/Tencent/TNN.git
