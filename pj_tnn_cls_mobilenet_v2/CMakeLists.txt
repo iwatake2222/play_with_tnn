@@ -39,7 +39,7 @@ endif()
 add_executable(${ProjectName} Main.cpp)
 
 # For MNN
-include(${CMAKE_SOURCE_DIR}/../third_party/cmakes/MNN.cmake)
+include(${CMAKE_SOURCE_DIR}/../third_party/cmakes/TNN.cmake)
 
 # For OpenCV
 find_package(OpenCV REQUIRED)
