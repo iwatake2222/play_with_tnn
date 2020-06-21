@@ -27,9 +27,15 @@
 #define MODEL_CHANNEL      3
 #define LABEL_NAME         RESOURCE_DIR"/model/imagenet_labels.txt"
 
+#ifdef CPU_IS_ARM
+#define DEVICE_TYPE TNN_NS::DEVICE_ARM
+#else
+#define DEVICE_TYPE TNN_NS::DEVICE_NAIVE
+#endif
+
 /* Settings */
 #define IMAGE_NAME   RESOURCE_DIR"/parrot.jpg"
-#define LOOP_NUM_FOR_TIME_MEASUREMENT 0
+#define LOOP_NUM_FOR_TIME_MEASUREMENT 100
 
 /**** Macro Funtions ****/
 #define CHECK(x)                              \
@@ -91,11 +97,12 @@ int main(int argc, const char* argv[])
 
 	TNN_NS::NetworkConfig network_config;
 	network_config.library_path = {""};
-	network_config.device_type  = TNN_NS::DEVICE_NAIVE;
+	network_config.device_type  = DEVICE_TYPE;
 	std::vector<int> nchw = {1, MODEL_CHANNEL, MODEL_HEIGHT, MODEL_WIDTH};
 	TNN_NS::InputShapesMap shapeMap;
 	shapeMap.insert(std::pair<std::string, TNN_NS::DimsVector>("input", nchw));
 	auto instance = net->CreateInst(network_config, status, shapeMap);
+	instance->SetCpuNumThreads(4);
 	// printf("%s\n", status.description().c_str());
 	CHECK(status == TNN_NS::TNN_OK);
 	CHECK(instance != NULL);
@@ -114,7 +121,7 @@ int main(int argc, const char* argv[])
 	cv::cvtColor(inputImage, inputImage, cv::COLOR_BGR2RGB);
 
 	/* normalize */
-	auto inputMat = std::make_shared<TNN_NS::Mat>(TNN_NS::DEVICE_NAIVE, TNN_NS::N8UC3, nchw, (uint8_t*)inputImage.data);
+	auto inputMat = std::make_shared<TNN_NS::Mat>(DEVICE_TYPE, TNN_NS::N8UC3, nchw, (uint8_t*)inputImage.data);
 	CHECK(inputMat != NULL);
 	TNN_NS::MatConvertParam inputCvtParam;
 	inputCvtParam.scale = {1.0 / (255 * 0.229), 1.0 / (255 * 0.224), 1.0 / (255 * 0.225), 0.0};
@@ -129,7 +136,7 @@ int main(int argc, const char* argv[])
 	/*** Post process ***/
 	/* Retreive results */
 	std::shared_ptr<TNN_NS::Mat> outputScoresMat = nullptr;
-	status = instance->GetOutputMat(outputScoresMat, tnn::MatConvertParam(), "", TNN_NS::DEVICE_NAIVE, TNN_NS::NCHW_FLOAT);
+	status = instance->GetOutputMat(outputScoresMat, tnn::MatConvertParam(), "", DEVICE_TYPE, TNN_NS::NCHW_FLOAT);
 	CHECK(status == TNN_NS::TNN_OK);
 
 	int size = outputScoresMat->GetChannel();
@@ -156,7 +163,6 @@ int main(int argc, const char* argv[])
 	printf("Inference time = %f [msec]\n", timeSpan.count() * 1000.0 / LOOP_NUM_FOR_TIME_MEASUREMENT);
 
 	/*** Finalize ***/
-
 
 	return 0;
 }

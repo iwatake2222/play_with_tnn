@@ -27,6 +27,13 @@ if(USE_PREBUILT_TNN)
 			$<$<STREQUAL:${BUILD_SYSTEM},armv7>:${CMAKE_SOURCE_DIR}/../third_party/TNN_prebuilt/armv7/libTNN.so>
 			$<$<STREQUAL:${BUILD_SYSTEM},aarch64>:${CMAKE_SOURCE_DIR}/../third_party/TNN_prebuilt/aarch64/libTNN.so>
 		)
+
+		# note: should use ln -s
+		add_custom_target(TNN_LIB_COPY ALL
+			COMMAND "cp" "${CMAKE_SOURCE_DIR}/../third_party/TNN_prebuilt/${BUILD_SYSTEM}/libTNN.so" "${CMAKE_CURRENT_BINARY_DIR}/."
+			COMMAND "cp" "${CMAKE_CURRENT_BINARY_DIR}/libTNN.so" "${CMAKE_CURRENT_BINARY_DIR}/libTNN.so.0"
+			COMMAND "cp" "${CMAKE_CURRENT_BINARY_DIR}/libTNN.so" "${CMAKE_CURRENT_BINARY_DIR}/libTNN.so.0.1.0.0"
+		)
 	endif()
 else()
 	if(MSVC_VERSION)
@@ -57,7 +64,7 @@ else()
 			set(TNN_OPENCL_ENABLE OFF CACHE BOOL "Enable OpenCL" FORCE)
 			set(TNN_QUANTIZATION_ENABLE OFF CACHE BOOL "Enable Quantization" FORCE)
 			set(TNN_UNIT_TEST_ENABLE OFF CACHE BOOL "Enable Test" FORCE)
-			set(TNN_BUILD_SHARED OFF CACHE BOOL "Enable Shared Library" FORCE)
+			set(TNN_BUILD_SHARED ON CACHE BOOL "Enable Shared Library" FORCE)
 		elseif(${BUILD_SYSTEM} STREQUAL "armv7")
 			set(TNN_CPU_ENABLE OFF CACHE BOOL "Enable Cpu" FORCE)
 			set(TNN_X86_ENABLE OFF CACHE BOOL "Enable X86" FORCE)
