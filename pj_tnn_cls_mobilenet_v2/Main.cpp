@@ -20,146 +20,143 @@
 
 /*** Macro ***/
 /* Model parameters */
-#define MODEL_NAME         RESOURCE_DIR"/model/mobilenetv2-1.0.opt.tnnmodel"
 #define MODEL_PROTO_NAME   RESOURCE_DIR"/model/mobilenetv2-1.0.opt.tnnproto"
-#define IMAGE_NAME   RESOURCE_DIR"/parrot.jpg"
+#define MODEL_NAME         RESOURCE_DIR"/model/mobilenetv2-1.0.opt.tnnmodel"
+#define MODEL_WIDTH        224
+#define MODEL_HEIGHT       224
+#define MODEL_CHANNEL      3
+#define LABEL_NAME         RESOURCE_DIR"/model/imagenet_labels.txt"
 
 /* Settings */
-#define LOOP_NUM_FOR_TIME_MEASUREMENT 100
+#define IMAGE_NAME   RESOURCE_DIR"/parrot.jpg"
+#define LOOP_NUM_FOR_TIME_MEASUREMENT 0
 
 /**** Macro Funtions ****/
 #define CHECK(x)                              \
   if (!(x)) {                                                \
-    fprintf(stderr, "Error at %s:%d\n", __FILE__, __LINE__); \
-    exit(1);                                                 \
+	fprintf(stderr, "Error at %s:%d\n", __FILE__, __LINE__); \
+	exit(1);                                                 \
   }
+
+static void readLabel(const char* filename, std::vector<std::string> & labels)
+{
+	std::ifstream ifs(filename);
+	if (ifs.fail()) {
+		printf("failed to read %s\n", filename);
+		return;
+	}
+	std::string str;
+	while (getline(ifs, str)) {
+		labels.push_back(str);
+	}
+}
+
+static std::string fdLoadFile(std::string path) {
+	std::ifstream file(path, std::ios::in);
+	if (file.is_open()) {
+		file.seekg(0, file.end);
+		int size      = file.tellg();
+		char* content = new char[size];
+
+		file.seekg(0, file.beg);
+		file.read(content, size);
+		std::string fileContent;
+		fileContent.assign(content, size);
+		delete[] content;
+		file.close();
+		return fileContent;
+	} else {
+		return "";
+	}
+}
 
 int main(int argc, const char* argv[])
 {
 	/*** Initialize ***/
+	/* read label */
+	std::vector<std::string> labels;
+	readLabel(LABEL_NAME, labels);
+
 	/* Create interpreter */
 	TNN_NS::Status status;
 	TNN_NS::ModelConfig config;
 	config.model_type = TNN_NS::MODEL_TYPE_TNN;
-	config.params = {MODEL_PROTO_NAME, MODEL_NAME};
+	const std::string proto = fdLoadFile(MODEL_PROTO_NAME);
+	const std::string model = fdLoadFile(MODEL_NAME);
+	config.params = {proto, model};
 	auto net = std::make_shared<TNN_NS::TNN>();
 	status = net->Init(config);
+	// printf("%s\n", status.description().c_str());
 	CHECK(status == TNN_NS::TNN_OK);
 
 	TNN_NS::NetworkConfig network_config;
 	network_config.library_path = {""};
-	network_config.device_type  = TNN_NS::DEVICE_ARM;
-	std::vector<int> nchw = {1, 3, 224, 224};
+	network_config.device_type  = TNN_NS::DEVICE_NAIVE;
+	std::vector<int> nchw = {1, MODEL_CHANNEL, MODEL_HEIGHT, MODEL_WIDTH};
 	TNN_NS::InputShapesMap shapeMap;
 	shapeMap.insert(std::pair<std::string, TNN_NS::DimsVector>("input", nchw));
 	auto instance = net->CreateInst(network_config, status, shapeMap);
+	// printf("%s\n", status.description().c_str());
 	CHECK(status == TNN_NS::TNN_OK);
 	CHECK(instance != NULL);
 
-	auto input_mat = std::make_shared<TNN_NS::Mat>(TNN_NS::DEVICE_ARM, TNN_NS::N8UC3, nchw);
-	CHECK(input_mat != NULL);
-	CHECK(input_mat->GetData() != NULL);
-	TNN_NS::MatConvertParam input_cvt_param;
-	input_cvt_param.scale = {1.0 / (255 * 0.229), 1.0 / (255 * 0.224), 1.0 / (255 * 0.225), 0.0};
-	input_cvt_param.bias  = {-0.485 / 0.229, -0.456 / 0.224, -0.406 / 0.225, 0.0};
-	status = instance->SetInputMat(input_mat, input_cvt_param);
-	CHECK(status != TNN_NS::TNN_OK);
+	/***** Process for each frame *****/
+	/*** Read image ***/
+	cv::Mat originalImage = cv::imread(IMAGE_NAME);
+	int imageWidth = originalImage.size[1];
+	int imageHeight = originalImage.size[0];
+	printf("image size: width = %d, height = %d\n", imageWidth, imageHeight);
 
-	status = instance->ForwardAsync(nullptr);
-	CHECK(status != TNN_NS::TNN_OK);
+	/*** Pre process ***/
+	/* resize, colorconversion */
+	cv::Mat inputImage;
+	cv::resize(originalImage, inputImage, cv::Size(MODEL_WIDTH, MODEL_HEIGHT));
+	cv::cvtColor(inputImage, inputImage, cv::COLOR_BGR2RGB);
 
-	std::shared_ptr<TNN_NS::Mat> output_mat_scores = nullptr;
-	status = instance->GetOutputMat(output_mat_scores);
-	CHECK(status != TNN_NS::TNN_OK);
+	/* normalize */
+	auto inputMat = std::make_shared<TNN_NS::Mat>(TNN_NS::DEVICE_NAIVE, TNN_NS::N8UC3, nchw, (uint8_t*)inputImage.data);
+	CHECK(inputMat != NULL);
+	TNN_NS::MatConvertParam inputCvtParam;
+	inputCvtParam.scale = {1.0 / (255 * 0.229), 1.0 / (255 * 0.224), 1.0 / (255 * 0.225), 0.0};
+	inputCvtParam.bias  = {-0.485 / 0.229, -0.456 / 0.224, -0.406 / 0.225, 0.0};
+	status = instance->SetInputMat(inputMat, inputCvtParam);
+	CHECK(status == TNN_NS::TNN_OK);
 
-	// std::shared_ptr<MNN::Interpreter> net(MNN::Interpreter::createFromFile(MODEL_NAME));
-	// MNN::ScheduleConfig scheduleConfig;
-	// scheduleConfig.type  = MNN_FORWARD_AUTO;
-	// scheduleConfig.numThread = 4;
-	// // BackendConfig bnconfig;
-	// // bnconfig.precision = BackendConfig::Precision_Low;
-	// // config.backendConfig = &bnconfig;
-	// auto session = net->createSession(scheduleConfig);
+	/*** Inference ***/
+	status = instance->Forward();
+	CHECK(status == TNN_NS::TNN_OK);
 
-	// /* Get model information */
-	// auto input = net->getSessionInput(session, NULL);
-	// int modelChannel = input->channel();
-	// int modelHeight  = input->height();
-	// int modelWidth   = input->width();
-	// printf("model input size: widgh = %d , height = %d, channel = %d\n", modelWidth, modelHeight, modelChannel);
+	/*** Post process ***/
+	/* Retreive results */
+	std::shared_ptr<TNN_NS::Mat> outputScoresMat = nullptr;
+	status = instance->GetOutputMat(outputScoresMat, tnn::MatConvertParam(), "", TNN_NS::DEVICE_NAIVE, TNN_NS::NCHW_FLOAT);
+	CHECK(status == TNN_NS::TNN_OK);
 
-	// /***** Process for each frame *****/
-	// /*** Read image ***/
-	// cv::Mat originalImage = cv::imread(IMAGE_NAME);
-	// int imageWidth = originalImage.size[1];
-	// int imageHeight = originalImage.size[0];
-	// printf("image size: width = %d, height = %d\n", imageWidth, imageHeight);
-	
-	// /*** Pre process (resize, colorconversion, normalize) ***/
-	// MNN::CV::ImageProcess::Config imageProcessconfig;
-	// imageProcessconfig.filterType = MNN::CV::BILINEAR;
-	// float mean[3]     = {127.5f, 127.5f, 127.5f};
-	// float normals[3] = {0.00785f, 0.00785f, 0.00785f};
-	// std::memcpy(imageProcessconfig.mean, mean, sizeof(mean));
-	// std::memcpy(imageProcessconfig.normal, normals, sizeof(normals));
-	// imageProcessconfig.sourceFormat = MNN::CV::BGR;
-	// imageProcessconfig.destFormat   = MNN::CV::BGR;
+	int size = outputScoresMat->GetChannel();
+	float *outputScoresData = (float*)outputScoresMat->GetData();
+	std::vector<std::pair<int, float>> tempValues(size);	// index, score
+	for (int i = 0; i < size; ++i) {
+		tempValues[i] = std::make_pair(i, outputScoresData[i]);
+	}
 
-	// MNN::CV::Matrix trans;
-	// trans.setScale((float)imageWidth/modelWidth, (float)imageHeight/modelHeight);
+	/* Find the highest score */
+	std::sort(tempValues.begin(), tempValues.end(), [](std::pair<int, float> a, std::pair<int, float> b) { return a.second > b.second; });
+	int length = size > 10 ? 10 : size;
+	for (int i = 0; i < length; ++i) {
+		printf("%s(%d): %f\n", labels[tempValues[i].first].c_str(), tempValues[i].first, tempValues[i].second);
+	}
 
-	// std::shared_ptr<MNN::CV::ImageProcess> pretreat(MNN::CV::ImageProcess::create(imageProcessconfig));
-	// pretreat->setMatrix(trans);
-	// pretreat->convert((uint8_t*)originalImage.data, imageWidth, imageHeight, 0, input);
+	/*** (Optional) Measure inference time ***/
+	const auto& t0 = std::chrono::steady_clock::now();
+	for (int i = 0; i < LOOP_NUM_FOR_TIME_MEASUREMENT; i++) {
+		instance->Forward();
+	}
+	const auto& t1 = std::chrono::steady_clock::now();
+	std::chrono::duration<double> timeSpan = t1 - t0;
+	printf("Inference time = %f [msec]\n", timeSpan.count() * 1000.0 / LOOP_NUM_FOR_TIME_MEASUREMENT);
 
-	// /*** Inference ***/
-	// net->runSession(session);
+	/*** Finalize ***/
 
-	// /*** Post process ***/
-	// /* Retreive results */
-	// auto output = net->getSessionOutput(session, NULL);
-	// auto dimType = output->getDimensionType();
-
-	// std::shared_ptr<MNN::Tensor> outputUser(new MNN::Tensor(output, dimType));
-	// output->copyToHostTensor(outputUser.get());
-	// auto size = outputUser->elementSize();
-	// auto type = outputUser->getType();
-	// printf("output size: size = %d\n", size);
-	
-	// std::vector<std::pair<int, float>> tempValues(size);
-	// if (type.code == halide_type_float) {
-	// 	auto values = outputUser->host<float>();
-	// 	for (int i = 0; i < size; ++i) {
-	// 		tempValues[i] = std::make_pair(i, values[i]);
-	// 	}
-	// } else if (type.code == halide_type_uint && type.bytes() == 1) {
-	// 	auto values = outputUser->host<uint8_t>();
-	// 	for (int i = 0; i < size; ++i) {
-	// 		tempValues[i] = std::make_pair(i, values[i]);
-	// 	}
-	// } else {
-	// 	printf("should not reach here\n");
-	// }
-
-	// /* Find the highest score */
-	// std::sort(tempValues.begin(), tempValues.end(), [](std::pair<int, float> a, std::pair<int, float> b) { return a.second > b.second; });
-	// int length = size > 10 ? 10 : size;
-	// for (int i = 0; i < length; ++i) {
-	// 	printf("%d: %f\n", tempValues[i].first, tempValues[i].second);
-	// }
-
-
-	// /*** (Optional) Measure inference time ***/
-	// const auto& t0 = std::chrono::steady_clock::now();
-	// for (int i = 0; i < LOOP_NUM_FOR_TIME_MEASUREMENT; i++) {
-	// 	net->runSession(session);
-	// }
-	// const auto& t1 = std::chrono::steady_clock::now();
-	// std::chrono::duration<double> timeSpan = t1 - t0;
-	// printf("Inference time = %f [msec]\n", timeSpan.count() * 1000.0 / LOOP_NUM_FOR_TIME_MEASUREMENT);
-
-	// /*** Finalize ***/
-	// net->releaseSession(session);
 
 	return 0;
 }

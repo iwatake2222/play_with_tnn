@@ -38,7 +38,7 @@ endif()
 # Create executable file
 add_executable(${ProjectName} Main.cpp)
 
-# For MNN
+# For TNN
 include(${CMAKE_SOURCE_DIR}/../third_party/cmakes/TNN.cmake)
 
 # For OpenCV
